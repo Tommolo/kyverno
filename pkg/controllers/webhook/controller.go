@@ -1050,10 +1050,12 @@ func (c *controller) buildForPoliciesMutation(ctx context.Context, cfg config.Co
 					if spec.CustomWebhookMatchConditions() {
 						if spec.GetFailurePolicy(ctx) == kyvernov1.Ignore {
 							fineGrainedIgnore := newWebhookPerPolicy(c.defaultTimeout, ignore, cfg.GetMatchConditions(), p)
+							fineGrainedIgnore.namespaceSelector = mergeLabelSelectors(p.GetSpec().GetWebhookConfiguration().NamespaceSelector, cfg.GetWebhook().NamespaceSelector)
 							ready = c.mergeWebhook(fineGrainedIgnore, p, false)
 							fineGrainedIgnoreList = append(fineGrainedIgnoreList, fineGrainedIgnore)
 						} else {
 							fineGrainedFail := newWebhookPerPolicy(c.defaultTimeout, fail, cfg.GetMatchConditions(), p)
+							fineGrainedFail.namespaceSelector = mergeLabelSelectors(p.GetSpec().GetWebhookConfiguration().NamespaceSelector, cfg.GetWebhook().NamespaceSelector)
 							ready = c.mergeWebhook(fineGrainedFail, p, false)
 							fineGrainedFailList = append(fineGrainedFailList, fineGrainedFail)
 						}
@@ -1084,6 +1086,17 @@ func (c *controller) buildForPoliciesMutation(ctx context.Context, cfg config.Co
 	return nil
 }
 
+// webhookNamespaceSelector returns the per-webhook namespaceSelector when set,
+// falling back to the global webhookCfg selector. This is used when building
+// Kyverno Policy/ClusterPolicy mutating webhooks to apply a per-webhook
+// namespace selector override, with the global selector as fallback.
+func webhookNamespaceSelector(wh *webhook, globalSelector *metav1.LabelSelector) *metav1.LabelSelector {
+	if wh.namespaceSelector != nil {
+		return wh.namespaceSelector
+	}
+	return globalSelector
+}
+
 func (c *controller) buildResourceMutatingWebhookRules(caBundle []byte, webhookCfg config.WebhookConfig, sideEffects *admissionregistrationv1.SideEffectClass, webhooks []*webhook) []admissionregistrationv1.MutatingWebhook {
 	mutatingWebhooks := make([]admissionregistrationv1.MutatingWebhook, 0, len(webhooks))
 	objectSelector := webhookCfg.ObjectSelector
@@ -1106,7 +1119,7 @@ func (c *controller) buildResourceMutatingWebhookRules(caBundle []byte, webhookC
 				FailurePolicy:           &failurePolicy,
 				SideEffects:             sideEffects,
 				AdmissionReviewVersions: []string{"v1"},
-				NamespaceSelector:       webhookCfg.NamespaceSelector,
+				NamespaceSelector:       webhookNamespaceSelector(webhook, webhookCfg.NamespaceSelector),
 				ObjectSelector:          objectSelector,
 				TimeoutSeconds:          &timeout,
 				ReinvocationPolicy:      &ifNeeded,
